@@ -1,0 +1,15 @@
+EduTrack Admin Subscription Control Center Patch
+
+Replaces/adds these project-relative files:
+server/adminSubscriptions.ts
+server/adminSubscriptionReviews.ts
+server/adminCustomers.ts
+server/subscriptionAdminDomain.mjs
+server/subscriptionAdminDomain.d.mts
+src/pages/admin/Subscriptions.tsx
+src/functions/src/subscriptionProjectionRefresh.ts
+src/functions/lib/subscriptionProjectionRefresh.js
+src/functions/lib/subscriptionProjectionRefresh.js.map
+tests/admin-subscription-management-domain.test.mjs
+
+No WhatsApp/Postabi dispatch implementation files are included.

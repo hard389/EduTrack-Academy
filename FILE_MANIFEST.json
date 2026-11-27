@@ -1,0 +1,167 @@
+{
+  "note": "Complete file copies are stored at the exact project-relative paths listed below. Line counts are for text files.",
+  "files": [
+    {
+      "path": "src/pages/DepartmentsPage.tsx",
+      "bytes": 192224,
+      "lines": 3894,
+      "sha256": "2c9f62e7561337d39984cdab5ff13f52443aff474c496ce1c598df3f678a9ff1"
+    },
+    {
+      "path": "src/pages/attendance.tsx",
+      "bytes": 105268,
+      "lines": 2312,
+      "sha256": "858907cd5c3918bc476d25b42e522cf2d9c8fe2de2a0a2d3769041c8238d36ab"
+    },
+    {
+      "path": "src/pages/alerts.tsx",
+      "bytes": 61316,
+      "lines": 758,
+      "sha256": "ebca6544b9538ae84756558cdecb92a552b39be35cc8e8f8beaf0629b88a37ce"
+    },
+    {
+      "path": "src/components/reports/ReportsDashboard.tsx",
+      "bytes": 156145,
+      "lines": 3166,
+      "sha256": "06fd696aeb9063eebe1182c28fab6874d04ab70ce94b48d1f6bf3c08b87eba5d"
+    },
+    {
+      "path": "src/functions/src/attendanceNotifications.ts",
+      "bytes": 25282,
+      "lines": 707,
+      "sha256": "e72d795621051240ed0c922b9f25c6656873d8ec568694717480f2f13207d298"
+    },
+    {
+      "path": "src/functions/src/monthlyReportWhatsApp.ts",
+      "bytes": 32029,
+      "lines": 696,
+      "sha256": "24d5cb1a09dd63251ec553582d566b1bbe5bdfac4bde1ac9290dab09e4b97826"
+    },
+    {
+      "path": "src/functions/src/whatsappService.ts",
+      "bytes": 14893,
+      "lines": 364,
+      "sha256": "f43c6608cf93968ead9cd4ef01bb52af9869f0048ef9b3d61dba8753645d94da"
+    },
+    {
+      "path": "src/functions/src/index.ts",
+      "bytes": 360,
+      "lines": 16,
+      "sha256": "45e437dcfe814654836da6b9c7d644a454306ff82f136d934cbe2befe5f338a0"
+    },
+    {
+      "path": "src/functions/package.json",
+      "bytes": 758,
+      "lines": 32,
+      "sha256": "6ba863033a6137eaf11a053db9a63e3f236009c2fa75b427984c35955ba4480e"
+    },
+    {
+      "path": "src/functions/package-lock.json",
+      "bytes": 111752,
+      "lines": 3045,
+      "sha256": "bf0bb5ba8e29ec411c1083efed098ab20f09e96136cdfb39722fa795426d266d"
+    },
+    {
+      "path": "src/functions/tsconfig.json",
+      "bytes": 367,
+      "lines": 16,
+      "sha256": "5f06831960177a776cfbe51e3354e19ccae7ca17e66f3573b13b803da9807fa6"
+    },
+    {
+      "path": "package.json",
+      "bytes": 4064,
+      "lines": 114,
+      "sha256": "74f23123a9dc324f5a0f20deb9be70808562a31cfc129fceda9e6adf8621748a"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 552912,
+      "lines": 15173,
+      "sha256": "9faab61c551cdc27075282699192e6b8fa5035637228465e5fd6b913522e52af"
+    },
+    {
+      "path": "firebase.json",
+      "bytes": 690,
+      "lines": 41,
+      "sha256": "8e08915a83d53a7fa2922bc0cedbfb47e6d0766f948ad3eb9e4931b4a227d5c9"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 392,
+      "lines": 33,
+      "sha256": "21fbdcc2d59999488b01482cd2fc7682313230d6de451f82f30fc85578e3d940"
+    },
+    {
+      "path": "EDUTRACK_WHATSAPP_PHASE4_README.md",
+      "bytes": 6759,
+      "lines": 78,
+      "sha256": "270fb59336eee09d8614075ef56d426e9d6559472eb8e58b727db6dff92c06bc"
+    },
+    {
+      "path": "src/lib/firebase.ts",
+      "bytes": 3124,
+      "lines": 70,
+      "sha256": "2440e1950e13f3c08d6be578b423c73f2abb448d623b829fcc80b3259d579954"
+    },
+    {
+      "path": "src/components/SharedDocumentPage.tsx",
+      "bytes": 16227,
+      "lines": 389,
+      "sha256": "cc41301759150af1a0beb8ba4412db720a8b1a582f812b164107f4aa28ac3584"
+    },
+    {
+      "path": "src/pages/admin/AdminLogin.tsx",
+      "bytes": 19650,
+      "lines": 520,
+      "sha256": "0dc09311d2592b31e8073f5270e922cad4423b20fb0addb13529643511d5068a"
+    },
+    {
+      "path": "server/firebaseAdmin.ts",
+      "bytes": 3549,
+      "lines": 133,
+      "sha256": "853a45f32aa533850ddbefce4c6c9d83b8bf7b2431b64033b2213f03e1deb3e8"
+    },
+    {
+      "path": "vite.config.ts",
+      "bytes": 1678,
+      "lines": 69,
+      "sha256": "03c42bf606cd115412e021186c1c95001606cb2b43ae3de64cfe07277515df48"
+    },
+    {
+      "path": ".firebaserc",
+      "bytes": 90,
+      "lines": 7,
+      "sha256": "943fad161b0eb11bee97a660c9bed3cd55615a8f7404c43c556ecd83a06cdca8"
+    },
+    {
+      "path": ".env.example",
+      "bytes": 1949,
+      "lines": 39,
+      "sha256": "6245abb7529d2fd2a9714023bdcf687c1bae50ed5054c868593389d60cefd048"
+    },
+    {
+      "path": "cloudflare/r2-api/wrangler.jsonc",
+      "bytes": 506,
+      "lines": 19,
+      "sha256": "92a07b007ff744e3a16e3562ebdda31acb35862dcf27f1c64474f6288580f085"
+    },
+    {
+      "path": "cloudflare/whatsapp-queue-scheduler/wrangler.jsonc",
+      "bytes": 456,
+      "lines": 21,
+      "sha256": "aaf9faa43fa15c2269decec2f4b2214fde02d686124a1e9b1805bf9c5711c759"
+    },
+    {
+      "path": "ACADEMY_DEPLOYMENT_SETUP.md",
+      "bytes": 6394,
+      "lines": 86,
+      "sha256": "212bdbe9143d83616f8dec573f21255fa4fa5ab839239dd767fea987b185b448"
+    },
+    {
+      "path": "README.md",
+      "bytes": 16896,
+      "lines": 368,
+      "sha256": "9bb933178e57198c6320affdb87d2eacafcefe8b0c65882e468d0832b56c2926"
+    }
+  ]
+}

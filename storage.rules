@@ -1,0 +1,84 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function activeAcademyAdmin(academyId) {
+      let mappingPath = /databases/(default)/documents/academyMemberships/$(request.auth.uid);
+      let memberPath = /databases/(default)/documents/academies/$(academyId)/members/$(request.auth.uid);
+      let academyPath = /databases/(default)/documents/academies/$(academyId);
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && firestore.exists(mappingPath)
+        && firestore.exists(memberPath)
+        && firestore.exists(academyPath)
+        && firestore.get(mappingPath).data.academyId == academyId
+        && firestore.get(mappingPath).data.role == 'academy_admin'
+        && firestore.get(mappingPath).data.active == true
+        && firestore.get(mappingPath).data.emailVerified == true
+        && firestore.get(mappingPath).data.email.lower() == request.auth.token.email.lower()
+        && firestore.get(memberPath).data.uid == request.auth.uid
+        && firestore.get(memberPath).data.academyId == academyId
+        && firestore.get(memberPath).data.role == 'academy_admin'
+        && firestore.get(memberPath).data.active == true
+        && firestore.get(memberPath).data.emailVerified == true
+        && firestore.get(memberPath).data.email.lower() == request.auth.token.email.lower()
+        && firestore.get(academyPath).data.status == 'active';
+    }
+    function activeAcademyMember(academyId) {
+      let mappingPath = /databases/(default)/documents/academyMemberships/$(request.auth.uid);
+      let memberPath = /databases/(default)/documents/academies/$(academyId)/members/$(request.auth.uid);
+      let academyPath = /databases/(default)/documents/academies/$(academyId);
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && firestore.exists(mappingPath)
+        && firestore.exists(memberPath)
+        && firestore.exists(academyPath)
+        && firestore.get(mappingPath).data.academyId == academyId
+        && firestore.get(mappingPath).data.role in ['teacher', 'academy_admin']
+        && firestore.get(mappingPath).data.active == true
+        && firestore.get(mappingPath).data.emailVerified == true
+        && firestore.get(mappingPath).data.email.lower() == request.auth.token.email.lower()
+        && firestore.get(memberPath).data.academyId == academyId
+        && firestore.get(memberPath).data.uid == request.auth.uid
+        && firestore.get(memberPath).data.role in ['teacher', 'academy_admin']
+        && firestore.get(memberPath).data.active == true
+        && firestore.get(memberPath).data.emailVerified == true
+        && firestore.get(memberPath).data.email.lower() == request.auth.token.email.lower()
+        && firestore.get(academyPath).data.status == 'active';
+    }
+    match /academies/{academyId}/students/{studentId}/profile/{fileName} {
+      allow read: if activeAcademyMember(academyId);
+      allow create, update: if activeAcademyAdmin(academyId)
+        && fileName == 'avatar'
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if activeAcademyAdmin(academyId) && fileName == 'avatar';
+    }
+    match /academies/{academyId}/teachers/{teacherUid}/profile/{fileName} {
+      function activeOwnAcademyTeacher() {
+        let mappingPath = /databases/(default)/documents/academyMemberships/$(request.auth.uid);
+        let memberPath = /databases/(default)/documents/academies/$(academyId)/members/$(teacherUid);
+        return signedIn()
+          && request.auth.uid == teacherUid
+          && activeAcademyMember(academyId)
+          && firestore.get(mappingPath).data.role == 'teacher'
+          && firestore.get(memberPath).data.role == 'teacher';
+      }
+      function teacherBelongsToAcademy() {
+        let memberPath = /databases/(default)/documents/academies/$(academyId)/members/$(teacherUid);
+        return firestore.exists(memberPath)
+          && firestore.get(memberPath).data.uid == teacherUid
+          && firestore.get(memberPath).data.role == 'teacher'
+          && firestore.get(memberPath).data.academyId == academyId;
+      }
+      allow read: if activeAcademyMember(academyId) && teacherBelongsToAcademy();
+      allow create, update: if (activeAcademyAdmin(academyId) || activeOwnAcademyTeacher())
+        && teacherBelongsToAcademy()
+        && fileName == 'avatar'
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if (activeAcademyAdmin(academyId) || activeOwnAcademyTeacher()) && teacherBelongsToAcademy() && fileName == 'avatar';
+    }
+    // No public or cross-Academy access is granted by default.
+  }
+}

@@ -1,0 +1,27 @@
+EDUTRACK ACADEMY ↔ TEACHER PORTAL SYNC PATCH
+Patch date: 2026-11-25
+
+MAIN CHANGES
+- New src/functions/src/academyPortalSync.ts: Academy-to-teacher class roster, quiz and alert projections; teacher-to-Academy attendance, quiz, report, notification and validated roster-edit synchronization; integration issue tracking.
+- Updated src/functions/src/index.ts and src/functions/lib/*: exports/build output for the new Cloud Functions triggers.
+- Updated server/academyAdminWorkspace.ts: Admin quiz assignment routing and verified teacher alert publication/archive.
+- Updated server/academyManagement.ts: analytics/read-only reports summary includes synchronized records.
+- Updated server/academyManagementDomain.mjs, src/contexts/AppContext.tsx, src/hooks/useAcademyAccess.ts and firestore.rules: explicit permission enforcement; removed unconditional core-module bypass.
+- Updated src/pages/quiz.tsx: existing Quiz classes/quiz list use live Firestore listeners and quiz editing requires explicit manage permission.
+- Updated src/pages/alerts.tsx: existing Teacher alerts feed uses a live Firestore listener.
+- Updated src/pages/academy-admin/AcademyAlertsPage.tsx: publish drafted Admin alerts to targeted teachers.
+- Updated tests/academy-core-module-access.test.mjs.
+- Added ACADEMY_TEACHER_PORTAL_SYNC_PATCH.md and APPLY_TEACHER_PORTAL_SYNC_PATCH.md.
+
+UI PROMISE
+No Teacher Portal page redesign is included. Existing Teacher Portal page layout and route structure are retained. Functionality and data access have been changed where required.
+
+RELEASE STATUS
+Focused permission tests and TypeScript/TSX syntax transpilation passed in the patch environment. Full project typecheck/build, Firebase Emulator rules tests, browser visual regression and staging E2E were not completed. Do not deploy directly to production without following APPLY_TEACHER_PORTAL_SYNC_PATCH.md.
+
+KNOWN LIMITS
+- Attendance/quiz synchronization is paused and logged if the same teacher has multiple active subjects in the same class, because the existing class-based UI has no subject selector.
+- Historical teacher attendance/quiz/report documents are not bulk-backfilled by this patch.
+- This patch adds synchronized canonical report records and analytics summaries but does not add a new Admin report-detail UI.
+- Publishing Academy alerts writes Teacher Portal notifications; it does not send WhatsApp/SMS messages.
+- The complete application requirements matrix still contains unrelated Partial / Not implemented items.

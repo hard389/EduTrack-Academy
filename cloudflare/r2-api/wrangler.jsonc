@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edutrack-academy-r2-api",
+  "main": "../edutrack-r2-worker-subscriptions.mjs",
+  "compatibility_date": "2026-11-23",
+  "r2_buckets": [
+    {
+      "binding": "EDUTRACK_BUCKET",
+      "bucket_name": "edutrack-academy-library"
+    }
+  ],
+  "vars": {
+    "FIREBASE_PROJECT_ID": "edutrack-academy",
+     "APP_ORIGINS": "http://localhost:8080,https://edutrack-academy.vercel.app"  
+  },
+  "observability": {
+    "enabled": true
+  }
+}

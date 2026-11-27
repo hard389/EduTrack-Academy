@@ -1,0 +1,42 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci",
+  "functions": {
+    "api/whatsapp.ts": {
+      "maxDuration": 300,
+      "includeFiles": "public/logo.png"
+    },
+    "api/admin.ts": {
+      "maxDuration": 60
+    },
+    "api/teacher.ts": {
+      "maxDuration": 60
+    },
+    "api/academy.ts": {
+      "maxDuration": 60
+    }
+  },
+  "devCommand": "vite --host 127.0.0.1 --port $PORT",
+  "rewrites": [
+    {
+      "source": "/api/admin/:path*",
+      "destination": "/api/admin?__route_path=:path*"
+    },
+    {
+      "source": "/api/teacher/:path*",
+      "destination": "/api/teacher?__route_path=:path*"
+    },
+    {
+      "source": "/api/whatsapp/:path*",
+      "destination": "/api/whatsapp?__route_path=:path*"
+    },
+    {
+      "source": "/api/academy/:path*",
+      "destination": "/api/academy?__route_path=:path*"
+    },
+    {
+      "source": "/:path((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

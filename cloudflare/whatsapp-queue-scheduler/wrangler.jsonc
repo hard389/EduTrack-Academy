@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edutrack-academy-whatsapp-scheduler",
+  "main": "index.mjs",
+  "compatibility_date": "2026-11-20",
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
+  "vars": {
+    "EDUTRACK_BASE_URL": "https://edutrack-academy.vercel.app"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

@@ -1,0 +1,100 @@
+PROJECT: Academy_EduTrack
+
+TASK:
+Perform a comprehensive technical analysis of this application.
+
+Analyze the actual source code and documentation.
+Do not assume functionality that cannot be verified.
+
+1. SYSTEM ARCHITECTURE
+   - Identify frontend architecture.
+   - Identify backend architecture.
+   - Identify architectural patterns.
+   - Identify application entry points.
+   - Explain communication between modules.
+
+2. TECHNOLOGY STACK
+   - Identify all frameworks and libraries.
+   - Identify programming languages.
+   - Identify database technologies.
+   - Identify cloud and hosting services.
+   - Analyze package dependencies.
+
+3. BACKEND ANALYSIS
+   - Analyze APIs and endpoints.
+   - Analyze controllers and handlers.
+   - Analyze business logic.
+   - Analyze authentication and authorization.
+   - Analyze middleware and server logic.
+
+4. FRONTEND ANALYSIS
+   - Analyze pages and components.
+   - Identify dashboards and portals.
+   - Analyze routing and navigation.
+   - Analyze state management.
+   - Explain frontend-backend communication.
+
+5. DATABASE ARCHITECTURE
+   - Identify collections and tables.
+   - Analyze data models.
+   - Analyze relationships.
+   - Analyze Firestore rules and indexes.
+   - Explain data flow.
+
+6. APPLICATION MODULES
+   - Identify all admin modules.
+   - Identify teacher modules.
+   - Identify student modules.
+   - Identify subscription and billing modules.
+   - Identify notification modules.
+   - Identify other existing modules.
+
+7. SECURITY AUDIT
+   - Review authentication.
+   - Review authorization.
+   - Review database security rules.
+   - Identify potential vulnerabilities.
+   - Identify exposed credentials or secrets.
+
+8. APPLICATION WORKFLOWS
+   - Explain important user workflows.
+   - Explain how data moves through the system.
+   - Identify external integrations.
+   - Identify background processes.
+
+9. DEPLOYMENT ARCHITECTURE
+   - Analyze deployment configurations.
+   - Identify hosting infrastructure.
+   - Analyze environment configuration.
+   - Explain deployment workflow.
+
+10. CODE QUALITY
+    - Identify duplicated code.
+    - Identify architectural problems.
+    - Identify missing tests.
+    - Identify scalability issues.
+    - Identify maintainability problems.
+
+11. FINAL DELIVERABLES
+    Generate:
+
+    A. Complete system architecture explanation.
+    B. Architecture diagram using Mermaid.
+    C. Frontend architecture diagram.
+    D. Backend architecture diagram.
+    E. Database architecture diagram.
+    F. API documentation overview.
+    G. Module dependency map.
+    H. Authentication and authorization flow.
+    I. Complete application data flow.
+    J. Security audit report.
+    K. Technical debt report.
+    L. Recommendations for improvement.
+
+IMPORTANT:
+- Inspect actual files before drawing conclusions.
+- Reference file paths for important findings.
+- Clearly distinguish verified facts from assumptions.
+- Do not invent missing APIs, modules or functionality.
+- Highlight files or information that are unavailable.
+- Do not expose credentials in the report.

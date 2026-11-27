@@ -1,0 +1,12 @@
+{
+  "name": "edutrack-admin-claim-tool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-time trusted setup of the EduTrack admin custom claim",
+  "scripts": {
+    "assign-admin-claim": "node set-admin-claim.cjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}

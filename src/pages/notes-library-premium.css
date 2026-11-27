@@ -1,0 +1,336 @@
+/* EduTrack Notes & Library — responsive presentation layer only.
+   All data loading, Firestore calls, upload/delete/share handlers and state remain in notes.tsx. */
+
+.notes-library-page {
+  --nl-orange: #f97316;
+  --nl-orange-deep: #ea580c;
+  --nl-ink: #111827;
+  --nl-muted: #64748b;
+  --nl-surface: #ffffff;
+  --nl-line: #e8edf4;
+  background:
+    radial-gradient(circle at 92% 4%, rgba(251, 146, 60, 0.075), transparent 23rem),
+    linear-gradient(180deg, #fbfcfe 0%, #f6f8fb 100%);
+}
+
+html.dark .notes-library-page {
+  --nl-ink: #f8fafc;
+  --nl-muted: #94a3b8;
+  --nl-surface: #0c1222;
+  --nl-line: rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(249, 115, 22, 0.09), transparent 24rem),
+    linear-gradient(180deg, #0a1020 0%, #070b13 100%);
+}
+
+.notes-library-page.dark {
+  --nl-ink: #f8fafc;
+  --nl-muted: #94a3b8;
+  --nl-surface: #0c1222;
+  --nl-line: rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(249, 115, 22, 0.09), transparent 24rem),
+    linear-gradient(180deg, #0a1020 0%, #070b13 100%);
+}
+
+.notes-library-page .nl-page-header {
+  top: 4rem;
+  background: rgba(255, 255, 255, 0.84);
+  border-bottom-color: rgba(226, 232, 240, 0.75);
+  box-shadow: 0 8px 24px -24px rgba(15, 23, 42, 0.32);
+}
+
+.dark .nl-page-header {
+  background: rgba(7, 11, 19, 0.86);
+  border-bottom-color: rgba(51, 65, 85, 0.55);
+}
+
+.notes-library-page .nl-page-header__inner {
+  min-height: 76px;
+}
+
+.notes-library-page .nl-page-header__inner > div:first-child {
+  min-width: 0;
+}
+
+.notes-library-page .nl-page-header__actions {
+  flex-shrink: 0;
+}
+
+.notes-library-page .nl-page-main {
+  padding-bottom: 3rem;
+}
+
+.notes-library-page .nl-library-hero {
+  min-height: 218px;
+  padding: clamp(1.5rem, 3vw, 2.7rem);
+  border-color: rgba(251, 146, 60, 0.58);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(251, 146, 60, 0.2), transparent 17rem),
+    linear-gradient(112deg, #ffffff 0%, #fffaf5 52%, #fff2dd 100%);
+  box-shadow: 0 18px 46px -34px rgba(234, 88, 12, 0.42);
+}
+
+.dark .nl-library-hero {
+  background:
+    radial-gradient(circle at 92% 8%, rgba(249, 115, 22, 0.14), transparent 17rem),
+    linear-gradient(112deg, #101827 0%, #111827 52%, #20170f 100%);
+  border-color: rgba(249, 115, 22, 0.28);
+}
+
+.notes-library-page .nl-library-hero__content {
+  min-height: 150px;
+}
+
+.notes-library-page .nl-library-metrics > div {
+  min-height: 92px;
+  border-radius: 22px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 7px 22px -20px rgba(15, 23, 42, 0.35);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.notes-library-page .nl-library-metrics > div:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 26px -22px rgba(15, 23, 42, 0.34);
+}
+
+.notes-library-page .nl-classes-section {
+  padding-top: 0.2rem;
+}
+
+.notes-library-page .nl-classes-section h3 {
+  font-size: 0.82rem;
+  letter-spacing: 0.1em;
+}
+
+.notes-library-page .nl-classes-grid {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1.15rem;
+}
+
+.notes-library-page .nl-class-card {
+  display: flex;
+  min-height: 216px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 1.35rem;
+  border-radius: 27px;
+  border-color: var(--nl-line);
+  box-shadow: 0 8px 22px -20px rgba(15, 23, 42, 0.4);
+  background: var(--nl-surface);
+}
+
+.notes-library-page .nl-class-card:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.38);
+  outline-offset: 3px;
+}
+
+.notes-library-page .nl-class-card h4 {
+  font-size: 0.95rem;
+}
+
+.notes-library-page .nl-class-card > div:last-child {
+  margin-top: 1.2rem;
+  padding-top: 0.9rem;
+}
+
+.notes-library-page .nl-selected-library {
+  width: 100%;
+}
+
+.notes-library-page .nl-resource-toolbar {
+  padding: 1.15rem;
+  border: 1px solid var(--nl-line);
+  border-radius: 27px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 28px -26px rgba(15, 23, 42, 0.4);
+}
+
+.dark .nl-resource-toolbar {
+  background: rgba(12, 18, 34, 0.76);
+}
+
+.notes-library-page .nl-selected-class-banner {
+  min-height: 68px;
+  padding: 0.85rem 1rem;
+  border-radius: 20px;
+}
+
+.notes-library-page .nl-resource-filters {
+  scrollbar-width: none;
+}
+
+.notes-library-page .nl-resource-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.notes-library-page .nl-resource-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.notes-library-page .nl-resource-grid > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0;
+}
+
+.notes-library-page .nl-resource-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 184px;
+  padding: 1.15rem;
+  border-radius: 25px;
+  border-color: var(--nl-line);
+  box-shadow: 0 9px 25px -23px rgba(15, 23, 42, 0.42);
+}
+
+.notes-library-page .nl-resource-sharebar {
+  min-width: 0;
+}
+
+.notes-library-page .nl-resource-shareurl {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.notes-library-page .nl-resource-actions {
+  flex-shrink: 0;
+}
+
+.notes-library-page .nl-mobile-bottom-nav__surface {
+  max-width: 440px;
+  padding: 0.55rem 0.85rem;
+  border-color: rgba(226, 232, 240, 0.8);
+  box-shadow: 0 18px 42px -20px rgba(15, 23, 42, 0.25);
+}
+
+.dark .nl-mobile-bottom-nav__surface {
+  border-color: rgba(71, 85, 105, 0.5);
+}
+
+@media (min-width: 700px) {
+  .notes-library-page .nl-classes-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 920px) {
+  .notes-library-page .nl-resource-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+}
+
+@media (min-width: 1180px) {
+  .notes-library-page .nl-classes-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .notes-library-page {
+    padding-bottom: 1.5rem;
+  }
+
+  .notes-library-page .nl-page-main {
+    padding-top: 2rem;
+    padding-bottom: 3.5rem;
+  }
+
+  /* The app shell already provides the full desktop sidebar navigation. */
+  .notes-library-page .nl-mobile-bottom-nav {
+    display: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .notes-library-page .nl-page-header__inner {
+    flex-wrap: wrap;
+    row-gap: 0.7rem;
+    padding-top: 0.8rem;
+    padding-bottom: 0.8rem;
+  }
+
+  .notes-library-page .nl-page-header__inner > div:first-child {
+    flex: 1 1 auto;
+  }
+
+  .notes-library-page .nl-page-header__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .notes-library-page .nl-library-hero {
+    min-height: 0;
+    padding: 1.15rem;
+    border-radius: 25px;
+  }
+
+  .notes-library-page .nl-library-hero__content {
+    min-height: 0;
+  }
+
+  .notes-library-page .nl-library-metrics {
+    gap: 0.65rem;
+  }
+
+  .notes-library-page .nl-library-metrics > div {
+    min-height: 82px;
+    padding: 0.8rem;
+    border-radius: 18px;
+  }
+
+  .notes-library-page .nl-class-card {
+    min-height: 188px;
+    padding: 1.05rem;
+    border-radius: 23px;
+  }
+
+  .notes-library-page .nl-resource-toolbar {
+    padding: 0.8rem;
+    border-radius: 22px;
+  }
+
+  .notes-library-page .nl-selected-class-banner {
+    padding: 0.7rem;
+  }
+
+  .notes-library-page .nl-resource-card {
+    padding: 0.95rem;
+    border-radius: 22px;
+  }
+
+  .notes-library-page .nl-resource-sharebar {
+    align-items: stretch;
+  }
+
+  .notes-library-page .nl-resource-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 390px) {
+  .notes-library-page .nl-storage-label {
+    display: none;
+  }
+
+  .notes-library-page .nl-page-header__actions {
+    gap: 0.45rem;
+  }
+
+  .notes-library-page .nl-resource-filters > button {
+    padding-left: 0.7rem;
+    padding-right: 0.7rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-library-page .nl-library-metrics > div {
+    transition: none;
+  }
+}

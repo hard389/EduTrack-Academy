@@ -1,0 +1,11 @@
+export type AcademyFeeLine = { classId?: string; kind?: string; amount?: number; paidAmount?: number; remainingBalance?: number };
+export type AcademyFeeInvoice = { billingMonth?: string; status?: string; lineItems?: AcademyFeeLine[] };
+export function getPreviousBillingMonth(month: string): string;
+export function getClassLineItems(invoice: AcademyFeeInvoice | null | undefined, classId: string): AcademyFeeLine[];
+export function getExtraLineItems(invoice: AcademyFeeInvoice | null | undefined): AcademyFeeLine[];
+export function sumInvoiceLines(lineItems: AcademyFeeLine[]): { billed: number; paid: number; due: number } | null;
+export function getLineItemStatus(totals: { billed: number; paid: number; due: number } | null): 'NOT_INVOICED' | 'PAID' | 'PARTIAL' | 'UNPAID';
+export function sumMonthlyEnrolmentPreview(enrolments: unknown[], classId: string): number | null;
+export function hasUnsupportedMonthlyBillingCycle(enrolments: unknown[]): boolean;
+export function getStudentClassLineTotals(invoice: AcademyFeeInvoice | null | undefined, classId: string): { billed: number; paid: number; due: number } | null;
+export function getClassInvoiceTotals(invoices: AcademyFeeInvoice[], classId: string, month: string): { billed: number; paid: number; due: number } | null;

@@ -1,0 +1,776 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------------
+    // Authentication, tenant ownership, Academy membership and feature permissions
+    // ---------------------------------------------------------------------------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // EduTrack stores tenant roots under normalized email. UID support is retained
+    // for existing UID-keyed tenant records used by older application flows.
+    function ownsTenant(tenantId) {
+      return signedIn() && (
+        tenantId == request.auth.uid ||
+        (
+          request.auth.token.email is string &&
+          tenantId == request.auth.token.email.lower()
+        )
+      );
+    }
+
+    function activeAcademyMembership(academyId) {
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(request.auth.uid);
+      let academyPath = /databases/$(database)/documents/academies/$(academyId);
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(request.auth.uid);
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && exists(mappingPath)
+        && exists(academyPath)
+        && exists(memberPath)
+        && get(mappingPath).data.academyId == academyId
+        && get(mappingPath).data.active == true
+        && get(mappingPath).data.emailVerified == true
+        && get(academyPath).data.academyId == academyId
+        && get(academyPath).data.status == 'active'
+        && get(memberPath).data.uid == request.auth.uid
+        && get(memberPath).data.academyId == academyId
+        && get(memberPath).data.email.lower() == request.auth.token.email.lower()
+        && get(memberPath).data.active == true
+        && get(memberPath).data.emailVerified == true
+        && get(mappingPath).data.email.lower() == request.auth.token.email.lower();
+    }
+
+    function activeAcademyTeacher(academyId) {
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(request.auth.uid);
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(request.auth.uid);
+      return activeAcademyMembership(academyId)
+        && get(mappingPath).data.role == 'teacher'
+        && get(memberPath).data.role == 'teacher';
+    }
+
+    function activeAcademyAdmin(academyId) {
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(request.auth.uid);
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(request.auth.uid);
+      return activeAcademyMembership(academyId)
+        && get(mappingPath).data.role == 'academy_admin'
+        && get(memberPath).data.role == 'academy_admin';
+    }
+
+    // Resolve and validate the complete teacher workspace in one bounded pass.
+    // The previous implementation composed activeAcademyTeacher() with
+    // activeAcademyMembership(), then re-read the same profile/member documents
+    // from hasAcademyPermission(). Complex OR permission checks could therefore
+    // exceed Firestore Rules' 1,000-expression evaluation limit.
+    function activeTeacherWorkspace(tenantId) {
+      let profilePath = /databases/$(database)/documents/users/$(tenantId);
+      let profile = exists(profilePath) ? get(profilePath).data : {};
+      let academyId = profile.get('academyId', '') is string && profile.get('academyId', '') != ''
+        ? profile.get('academyId', '')
+        : '__missing_academy__';
+      let uid = request.auth != null ? request.auth.uid : '__unauthenticated__';
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(uid);
+      let mapping = exists(mappingPath) ? get(mappingPath).data : {};
+      let academyPath = /databases/$(database)/documents/academies/$(academyId);
+      let academy = academyId != '__missing_academy__' && exists(academyPath) ? get(academyPath).data : {};
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(uid);
+      let member = academyId != '__missing_academy__' && exists(memberPath) ? get(memberPath).data : {};
+      return ownsTenant(tenantId)
+        && request.auth.token.get('email', null) is string
+        && request.auth.token.get('email_verified', false) == true
+        && exists(profilePath)
+        && profile.get('uid', '') == request.auth.uid
+        && profile.get('email', '') is string
+        && profile.get('email', '').lower() == request.auth.token.email.lower()
+        && profile.get('role', '') == 'teacher'
+        && profile.get('active', false) == true
+        && academyId != '__missing_academy__'
+        && profile.get('disabled', false) != true
+        && profile.get('deleted', false) != true
+        && exists(mappingPath)
+        && mapping.get('academyId', '') == academyId
+        && mapping.get('role', '') == 'teacher'
+        && mapping.get('active', false) == true
+        && mapping.get('emailVerified', false) == true
+        && mapping.get('email', '') is string
+        && mapping.get('email', '').lower() == request.auth.token.email.lower()
+        && exists(academyPath)
+        && academy.get('academyId', '') == academyId
+        && academy.get('status', '') == 'active'
+        && exists(memberPath)
+        && member.get('uid', '') == request.auth.uid
+        && member.get('academyId', '') == academyId
+        && member.get('role', '') == 'teacher'
+        && member.get('active', false) == true
+        && member.get('emailVerified', false) == true
+        && member.get('email', '') is string
+        && member.get('email', '').lower() == request.auth.token.email.lower();
+    }
+
+    // Teacher access is derived from the trusted Academy membership, never from
+    // SaaS subscription plans, entitlement projections, add-ons or quotas.
+    function academyPermissionForFeature(featureKey) {
+      // Use explicit conditional mapping instead of a dynamic map lookup. This
+      // keeps unknown feature names fail-closed and makes the selected key
+      // statically visible to the Rules evaluator.
+      return featureKey == 'student_management' ? 'students.view_assigned' :
+        featureKey == 'class_management' ? 'classes.view_assigned' :
+        featureKey == 'attendance_management' ? 'attendance.take_assigned' :
+        featureKey == 'attendance_alerts' ? 'alerts.manage' :
+        featureKey == 'monthly_reports' ? 'reports.view_assigned' :
+        featureKey == 'fortnightly_reports' ? 'reports.view_assigned' :
+        featureKey == 'weekly_reports' ? 'reports.view_assigned' :
+        featureKey == 'attendance_analytics' ? 'analytics.view_assigned' :
+        featureKey == 'advanced_analytics' ? 'analytics.view_all' :
+        featureKey == 'fee_tracking' ? 'fees.view_assigned' :
+        featureKey == 'fee_alerts' ? 'fees.alerts' :
+        featureKey == 'custom_alerts' ? 'alerts.manage' :
+        featureKey == 'quiz_management' ? 'quiz.view_assigned' :
+        featureKey == 'quiz_result_notifications' ? 'quiz.manage_assigned' :
+        featureKey == 'notes_library' ? 'notes.view' :
+        featureKey == 'library_link_whatsapp' ? 'notes.manage' :
+        featureKey == 'announcements' ? 'alerts.manage' : '';
+    }
+
+    // Resolve the teacher identity and requested permission in one pass.
+    // Keep this function at or below Firestore Rules' 10-let binding limit.
+    // Avoid composing multiple workspace helpers: that duplicates expression
+    // evaluation and can make otherwise valid teacher writes exceed Rules limits.
+    function hasAcademyPermission(tenantId, permissionKey) {
+      let profilePath = /databases/$(database)/documents/users/$(tenantId);
+      let profile = exists(profilePath) ? get(profilePath).data : {};
+      let academyId = profile.get('academyId', '') is string && profile.get('academyId', '') != ''
+        ? profile.get('academyId', '')
+        : '__missing_academy__';
+      let uid = request.auth != null ? request.auth.uid : '__unauthenticated__';
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(uid);
+      let mapping = exists(mappingPath) ? get(mappingPath).data : {};
+      let academyPath = /databases/$(database)/documents/academies/$(academyId);
+      let academy = academyId != '__missing_academy__' && exists(academyPath) ? get(academyPath).data : {};
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(uid);
+      let member = academyId != '__missing_academy__' && exists(memberPath) ? get(memberPath).data : {};
+      return ownsTenant(tenantId)
+        && request.auth.token.get('email', null) is string
+        && request.auth.token.get('email_verified', false) == true
+        && exists(profilePath)
+        && profile.get('uid', '') == uid
+        && profile.get('email', '') is string
+        && profile.get('email', '').lower() == request.auth.token.email.lower()
+        && profile.get('role', '') == 'teacher'
+        && profile.get('active', false) == true
+        && profile.get('disabled', false) != true
+        && profile.get('deleted', false) != true
+        && academyId != '__missing_academy__'
+        && exists(mappingPath)
+        && mapping.get('academyId', '') == academyId
+        && mapping.get('role', '') == 'teacher'
+        && mapping.get('active', false) == true
+        && mapping.get('emailVerified', false) == true
+        && mapping.get('email', '') is string
+        && mapping.get('email', '').lower() == request.auth.token.email.lower()
+        && exists(academyPath)
+        && academy.get('academyId', '') == academyId
+        && academy.get('status', '') == 'active'
+        && exists(memberPath)
+        && member.get('uid', '') == uid
+        && member.get('academyId', '') == academyId
+        && member.get('role', '') == 'teacher'
+        && member.get('active', false) == true
+        && member.get('emailVerified', false) == true
+        && member.get('email', '') is string
+        && member.get('email', '').lower() == request.auth.token.email.lower()
+        && permissionKey is string
+        && permissionKey != ''
+        && (permissionKey == 'dashboard.view'
+          || (member.get('permissions', {}) is map
+            && member.get('permissions', {}).get(permissionKey, false) == true));
+    }
+
+    // Multi-permission predicates deliberately validate the workspace once.
+    // Do not load a partial profile/member and then invoke activeTeacherWorkspace()
+    // which would re-evaluate the same records in the same Rules expression.
+    function hasAnyAcademyPermission(tenantId, permissionA, permissionB, permissionC) {
+      let profilePath = /databases/$(database)/documents/users/$(tenantId);
+      let profile = exists(profilePath) ? get(profilePath).data : {};
+      let academyId = profile.get('academyId', '') is string && profile.get('academyId', '') != ''
+        ? profile.get('academyId', '')
+        : '__missing_academy__';
+      let uid = request.auth != null ? request.auth.uid : '__unauthenticated__';
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(uid);
+      let mapping = exists(mappingPath) ? get(mappingPath).data : {};
+      let academyPath = /databases/$(database)/documents/academies/$(academyId);
+      let academy = academyId != '__missing_academy__' && exists(academyPath) ? get(academyPath).data : {};
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(uid);
+      let member = academyId != '__missing_academy__' && exists(memberPath) ? get(memberPath).data : {};
+      return ownsTenant(tenantId)
+        && request.auth.token.get('email', null) is string
+        && request.auth.token.get('email_verified', false) == true
+        && exists(profilePath)
+        && profile.get('uid', '') == uid
+        && profile.get('email', '') is string
+        && profile.get('email', '').lower() == request.auth.token.email.lower()
+        && profile.get('role', '') == 'teacher'
+        && profile.get('active', false) == true
+        && profile.get('disabled', false) != true
+        && profile.get('deleted', false) != true
+        && academyId != '__missing_academy__'
+        && exists(mappingPath)
+        && mapping.get('academyId', '') == academyId
+        && mapping.get('role', '') == 'teacher'
+        && mapping.get('active', false) == true
+        && mapping.get('emailVerified', false) == true
+        && mapping.get('email', '') is string
+        && mapping.get('email', '').lower() == request.auth.token.email.lower()
+        && exists(academyPath)
+        && academy.get('academyId', '') == academyId
+        && academy.get('status', '') == 'active'
+        && exists(memberPath)
+        && member.get('uid', '') == uid
+        && member.get('academyId', '') == academyId
+        && member.get('role', '') == 'teacher'
+        && member.get('active', false) == true
+        && member.get('emailVerified', false) == true
+        && member.get('email', '') is string
+        && member.get('email', '').lower() == request.auth.token.email.lower()
+        && member.get('permissions', {}) is map
+        && (
+          (permissionA is string && permissionA != '' && member.get('permissions', {}).get(permissionA, false) == true)
+          || (permissionB is string && permissionB != '' && member.get('permissions', {}).get(permissionB, false) == true)
+          || (permissionC is string && permissionC != '' && member.get('permissions', {}).get(permissionC, false) == true)
+        );
+    }
+
+    function hasAllAcademyPermissions3(tenantId, permissionA, permissionB, permissionC) {
+      let profilePath = /databases/$(database)/documents/users/$(tenantId);
+      let profile = exists(profilePath) ? get(profilePath).data : {};
+      let academyId = profile.get('academyId', '') is string && profile.get('academyId', '') != ''
+        ? profile.get('academyId', '')
+        : '__missing_academy__';
+      let uid = request.auth != null ? request.auth.uid : '__unauthenticated__';
+      let mappingPath = /databases/$(database)/documents/academyMemberships/$(uid);
+      let mapping = exists(mappingPath) ? get(mappingPath).data : {};
+      let academyPath = /databases/$(database)/documents/academies/$(academyId);
+      let academy = academyId != '__missing_academy__' && exists(academyPath) ? get(academyPath).data : {};
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(uid);
+      let member = academyId != '__missing_academy__' && exists(memberPath) ? get(memberPath).data : {};
+      return ownsTenant(tenantId)
+        && request.auth.token.get('email', null) is string
+        && request.auth.token.get('email_verified', false) == true
+        && exists(profilePath)
+        && profile.get('uid', '') == uid
+        && profile.get('email', '') is string
+        && profile.get('email', '').lower() == request.auth.token.email.lower()
+        && profile.get('role', '') == 'teacher'
+        && profile.get('active', false) == true
+        && profile.get('disabled', false) != true
+        && profile.get('deleted', false) != true
+        && academyId != '__missing_academy__'
+        && exists(mappingPath)
+        && mapping.get('academyId', '') == academyId
+        && mapping.get('role', '') == 'teacher'
+        && mapping.get('active', false) == true
+        && mapping.get('emailVerified', false) == true
+        && mapping.get('email', '') is string
+        && mapping.get('email', '').lower() == request.auth.token.email.lower()
+        && exists(academyPath)
+        && academy.get('academyId', '') == academyId
+        && academy.get('status', '') == 'active'
+        && exists(memberPath)
+        && member.get('uid', '') == uid
+        && member.get('academyId', '') == academyId
+        && member.get('role', '') == 'teacher'
+        && member.get('active', false) == true
+        && member.get('emailVerified', false) == true
+        && member.get('email', '') is string
+        && member.get('email', '').lower() == request.auth.token.email.lower()
+        && member.get('permissions', {}) is map
+        && permissionA is string && permissionA != ''
+        && permissionB is string && permissionB != ''
+        && permissionC is string && permissionC != ''
+        && member.get('permissions', {}).get(permissionA, false) == true
+        && member.get('permissions', {}).get(permissionB, false) == true
+        && member.get('permissions', {}).get(permissionC, false) == true;
+    }
+
+    function hasFeature(tenantId, featureKey) {
+      let permissionKey = academyPermissionForFeature(featureKey);
+      return permissionKey != '' && hasAcademyPermission(tenantId, permissionKey);
+    }
+
+    function canEditAssignedStudents(tenantId) {
+      return hasAnyAcademyPermission(tenantId, 'students.edit_assigned', 'students.manage_all', '');
+    }
+
+    function canReadAssignedAttendance(tenantId) {
+      return hasAnyAcademyPermission(tenantId, 'attendance.take_assigned', 'attendance.view_assigned', 'attendance.view_all');
+    }
+
+    function canReadTeacherClassWorkspace(tenantId) {
+      // Every teacher class document is a per-teacher projection. Resolve the
+      // trusted member permission map once instead of expanding 28 complete
+      // hasAcademyPermission() checks into one Rules expression tree.
+      let profilePath = /databases/$(database)/documents/users/$(tenantId);
+      let profile = exists(profilePath) ? get(profilePath).data : {};
+      let academyId = profile.get('academyId', '') is string && profile.get('academyId', '') != ''
+        ? profile.get('academyId', '')
+        : '__missing_academy__';
+      let uid = request.auth != null ? request.auth.uid : '__unauthenticated__';
+      let memberPath = /databases/$(database)/documents/academies/$(academyId)/members/$(uid);
+      let member = academyId != '__missing_academy__' && exists(memberPath) ? get(memberPath).data : {};
+      let permissions = member.get('permissions', {});
+      return activeTeacherWorkspace(tenantId)
+        && exists(memberPath)
+        && member.get('role', '') == 'teacher'
+        && member.get('active', false) == true
+        && member.get('emailVerified', false) == true
+        && permissions is map
+        && (
+          permissions.get('classes.view_assigned', false) == true
+          || permissions.get('classes.create_assigned', false) == true
+          || permissions.get('classes.manage_all', false) == true
+          || permissions.get('subjects.view_assigned', false) == true
+          || permissions.get('subjects.manage_all', false) == true
+          || permissions.get('students.view_assigned', false) == true
+          || permissions.get('students.create', false) == true
+          || permissions.get('students.edit_assigned', false) == true
+          || permissions.get('students.manage_all', false) == true
+          || permissions.get('attendance.take_assigned', false) == true
+          || permissions.get('attendance.view_assigned', false) == true
+          || permissions.get('attendance.view_all', false) == true
+          || permissions.get('attendance.correct', false) == true
+          || permissions.get('attendance.substitute_session', false) == true
+          || permissions.get('quiz.view_assigned', false) == true
+          || permissions.get('quiz.manage_assigned', false) == true
+          || permissions.get('reports.view_assigned', false) == true
+          || permissions.get('reports.view_all', false) == true
+          || permissions.get('analytics.view_assigned', false) == true
+          || permissions.get('analytics.view_all', false) == true
+          || permissions.get('fees.view_assigned', false) == true
+          || permissions.get('fees.collect', false) == true
+          || permissions.get('fees.view_all', false) == true
+          || permissions.get('fees.alerts', false) == true
+          || permissions.get('notes.view', false) == true
+          || permissions.get('notes.manage', false) == true
+          || permissions.get('alerts.view', false) == true
+          || permissions.get('alerts.manage', false) == true
+        );
+    }
+
+    function hasAnnouncementQuotaReservation(tenantId, notificationId) {
+      let reservationPath = /databases/$(database)/documents/users/$(tenantId)/announcementQuotaReservations/$(notificationId);
+      let reservation = get(reservationPath).data;
+      return exists(reservationPath)
+        && request.auth.token.email is string
+        && reservation.teacherUid == request.auth.uid
+        && reservation.tenantEmail == request.auth.token.email.lower()
+        && reservation.targetClass == request.resource.data.targetClass
+        && reservation.status in ['reserved', 'committed'];
+    }
+
+    function canReadOwnProfile(tenantId) {
+      return ownsTenant(tenantId)
+        && request.auth.token.email is string
+        && tenantId == request.auth.token.email.lower();
+    }
+
+    // Only fields written by the current Settings > Profile save flow may be changed
+    // on the root /users/{tenantId} document. Authorization, ownership, registration,
+    // subscription and account-state fields remain immutable to browser clients.
+    function validRootProfileUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+        'teacherName',
+        'name',
+        'designation',
+        'teacherDesignation',
+        'schoolName',
+        'academyName',
+        'whatsappNumber',
+        'phone',
+        'profileImage',
+        'avatarUrl',
+        'updatedAt'
+      ])
+      && (!changed.hasAny(['teacherName']) || request.resource.data.teacherName is string)
+      && (!changed.hasAny(['name']) || request.resource.data.name is string)
+      && (!changed.hasAny(['designation']) || request.resource.data.designation is string)
+      && (!changed.hasAny(['teacherDesignation']) || request.resource.data.teacherDesignation is string)
+      && (!changed.hasAny(['schoolName']) || request.resource.data.schoolName is string)
+      && (!changed.hasAny(['academyName']) || request.resource.data.academyName is string)
+      && (!changed.hasAny(['whatsappNumber']) || request.resource.data.whatsappNumber is string)
+      && (!changed.hasAny(['phone']) || request.resource.data.phone is string)
+      && (!changed.hasAny(['profileImage']) || request.resource.data.profileImage is string)
+      && (!changed.hasAny(['avatarUrl']) || request.resource.data.avatarUrl is string)
+      && (!changed.hasAny(['updatedAt']) || request.resource.data.updatedAt is string);
+    }
+
+    // The current Notes page initializes exactly one 1 GiB unverified storage record.
+    // The backend/R2 reconciliation process is the only authority for later quota/usage
+    // changes, so browser clients may create this initial record but cannot update/delete it.
+    function validInitialStorageUsage() {
+      return request.resource.data.keys().hasOnly([
+        'ownerUid',
+        'defaultQuotaBytes',
+        'allocatedQuotaBytes',
+        'usedBytes',
+        'additionalGrantedBytes',
+        'usageVerified',
+        'usageStatus',
+        'usageSource',
+        'unknownFileCount',
+        'createdAt',
+        'updatedAt',
+        'lastReconciledAt'
+      ])
+      && request.resource.data.keys().hasAll([
+        'ownerUid',
+        'defaultQuotaBytes',
+        'allocatedQuotaBytes',
+        'usedBytes',
+        'additionalGrantedBytes',
+        'usageVerified',
+        'usageStatus',
+        'usageSource',
+        'unknownFileCount',
+        'createdAt',
+        'updatedAt',
+        'lastReconciledAt'
+      ])
+      && request.resource.data.ownerUid == request.auth.uid
+      && request.resource.data.defaultQuotaBytes == 1073741824
+      && request.resource.data.allocatedQuotaBytes == 1073741824
+      && request.resource.data.usedBytes == 0
+      && request.resource.data.additionalGrantedBytes == 0
+      && request.resource.data.usageVerified == false
+      && request.resource.data.usageStatus == 'reconciliation_required'
+      && request.resource.data.usageSource == 'client-init-unverified'
+      && request.resource.data.unknownFileCount == 0
+      && request.resource.data.createdAt == request.time
+      && request.resource.data.updatedAt == request.time
+      && request.resource.data.lastReconciledAt == null;
+    }
+
+    // Teachers may submit pending storage-extension requests. They cannot grant
+    // quota or approve their own requests; Admin SDK/backend processing does that.
+    function validStorageExtensionRequest(tenantId) {
+      let usagePath = /databases/$(database)/documents/users/$(tenantId)/storage/usage;
+      let usage = get(usagePath).data;
+      return hasFeature(tenantId, 'notes_library')
+        && exists(usagePath)
+        && usage.ownerUid == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'ownerUid',
+          'requestedGb',
+          'requestedBytes',
+          'grantedGb',
+          'status',
+          'previousQuotaBytes',
+          'newQuotaBytes',
+          'requestDate',
+          'approvalDate',
+          'reason',
+          'createdBy'
+        ])
+        && request.resource.data.keys().hasAll([
+          'ownerUid',
+          'requestedGb',
+          'requestedBytes',
+          'grantedGb',
+          'status',
+          'previousQuotaBytes',
+          'newQuotaBytes',
+          'requestDate',
+          'approvalDate',
+          'reason',
+          'createdBy'
+        ])
+        && request.resource.data.ownerUid == request.auth.uid
+        && (request.resource.data.requestedGb is int || request.resource.data.requestedGb is float)
+        && request.resource.data.requestedGb > 0
+        && request.resource.data.requestedGb <= 100
+        && request.resource.data.requestedBytes is int
+        && request.resource.data.requestedBytes > 0
+        && request.resource.data.requestedBytes <= 107374182400
+        && request.resource.data.requestedBytes >= request.resource.data.requestedGb * 1073741824 - 1
+        && request.resource.data.requestedBytes <= request.resource.data.requestedGb * 1073741824 + 1
+        && request.resource.data.grantedGb == 0
+        && request.resource.data.status == 'pending'
+        && request.resource.data.previousQuotaBytes is int
+        && request.resource.data.previousQuotaBytes > 0
+        && request.resource.data.newQuotaBytes == null
+        && request.resource.data.requestDate == request.time
+        && request.resource.data.approvalDate == null
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.createdBy == 'teacher-request';
+    }
+
+    // ---------------------------------------------------------------------------
+    // Tenant root and tenant-owned collections
+    // ---------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------------
+    // Academy identity and membership (all writes are trusted Admin SDK operations)
+    // ---------------------------------------------------------------------------
+
+    match /academies/{academyId} {
+      allow get: if activeAcademyMembership(academyId);
+      allow list, create, update, delete: if false;
+
+      match /members/{memberUid} {
+        allow get: if signedIn() && request.auth.uid == memberUid && activeAcademyMembership(academyId);
+        allow list: if false;
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /academyMemberships/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /systemCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /academyRateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    match /users/{tenantId} {
+      // Root profile document is read one document at a time by its owner.
+      allow get: if canReadOwnProfile(tenantId);
+      allow list: if false;
+
+      // Root teacher profiles are created only by the trusted Firebase Admin SDK.
+      // Public Academy registration and Academy Admin teacher creation never write
+      // authorization or tenant identity fields directly from the browser.
+      allow create: if false;
+
+      allow update: if ownsTenant(tenantId) && validRootProfileUpdate();
+      allow delete: if false;
+
+      // Server-owned entitlement projection: no browser read/write access.
+      match /subscriptionEntitlements/{entitlementId} {
+        allow read, write: if false;
+      }
+
+      // Compatibility class projections are private to the verified teacher's own tenant.
+      // Reading one's assigned workspace is a core prerequisite; mutation remains permission-gated.
+      match /classes/{classId} {
+        allow read: if canReadTeacherClassWorkspace(tenantId);
+        // Class documents are server-created projections. The only browser-side root update
+        // retained for the legacy student editor is the students array, gated by edit access.
+        allow create, delete: if false;
+        allow update: if canEditAssignedStudents(tenantId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['students']);
+
+        match /quizzes/{quizId} {
+          allow read: if hasFeature(tenantId, 'quiz_management');
+          allow create: if hasAcademyPermission(tenantId, 'quiz.manage_assigned')
+            && request.resource.data.get('sourceType', '') != 'academy_admin';
+          allow update: if hasAcademyPermission(tenantId, 'quiz.manage_assigned')
+            && resource.data.get('sourceType', '') != 'academy_admin'
+            && request.resource.data.get('sourceType', '') != 'academy_admin';
+          allow delete: if hasAcademyPermission(tenantId, 'quiz.manage_assigned')
+            && resource.data.get('sourceType', '') != 'academy_admin';
+        }
+
+        match /reports/{reportId} {
+          allow read, write: if hasAcademyPermission(tenantId, 'reports.view_assigned');
+        }
+
+        match /documents/{documentId} {
+          allow read, write: if hasAllAcademyPermissions3(tenantId,
+            'classes.view_assigned', 'students.view_assigned', 'notes.view');
+        }
+      }
+
+      match /attendance/{attendanceId} {
+        allow read: if canReadAssignedAttendance(tenantId);
+        allow create, update: if hasFeature(tenantId, 'attendance_management');
+        allow delete: if false;
+      }
+
+      match /fees/{feeId} {
+        allow read: if hasFeature(tenantId, 'fee_tracking');
+        // Legacy fee documents remain available only for the legacy compatibility path.
+        // Canonical Academy invoices are always changed through the trusted transaction API.
+        allow create, update: if hasAcademyPermission(tenantId, 'fees.collect');
+        allow delete: if false;
+
+        match /payments/{paymentId} {
+          allow read: if hasFeature(tenantId, 'fee_tracking');
+          allow create: if hasAcademyPermission(tenantId, 'fees.collect');
+          allow update, delete: if false;
+        }
+      }
+
+      match /feeAlertSettings/{settingId} {
+        allow read, write: if settingId == 'general'
+          && hasFeature(tenantId, 'fee_alerts');
+      }
+
+      match /extra_fee_cards/{cardId} {
+        allow read: if hasFeature(tenantId, 'fee_tracking');
+        allow create, update: if hasAcademyPermission(tenantId, 'fees.adjust');
+        allow delete: if false;
+      }
+
+      match /extra_fee_payments/{paymentId} {
+        allow read: if hasFeature(tenantId, 'fee_tracking');
+        allow create: if hasAcademyPermission(tenantId, 'fees.collect');
+        allow update, delete: if false;
+      }
+
+      // Teacher-owned operational alerts. WhatsApp failure records are created by
+      // trusted backend code; a teacher may only mark them read.
+      match /notifications/{notificationId} {
+        allow read: if hasAcademyPermission(tenantId, 'alerts.view');
+
+        allow create: if request.resource.data.get('sourceType', '') == 'academy_admin'
+          ? false
+          : request.resource.data.category == 'WhatsApp'
+          ? false
+          : request.resource.data.category == 'Announcements'
+            ? hasFeature(tenantId, 'announcements')
+              && request.resource.data.announcementQuotaReservationId == notificationId
+              && hasAnnouncementQuotaReservation(tenantId, notificationId)
+            : hasFeature(tenantId, 'custom_alerts');
+
+        allow update: if resource.data.sourceType == 'academy_admin'
+          ? request.resource.data.sourceType == 'academy_admin'
+            && request.resource.data.academyId == resource.data.academyId
+            && hasAcademyPermission(tenantId, 'alerts.view')
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+          : resource.data.category == 'WhatsApp'
+          ? request.resource.data.category == 'WhatsApp'
+            && activeTeacherWorkspace(tenantId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+          : (
+              resource.data.category == 'Announcements'
+              && request.resource.data.category == 'Announcements'
+              && request.resource.data.get('announcementQuotaReservationId', null)
+                == resource.data.get('announcementQuotaReservationId', null)
+              && hasFeature(tenantId, 'announcements')
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'isRead',
+                'whatsappDispatchStatus',
+                'whatsappDispatchError'
+              ])
+            ) || (
+              resource.data.category != 'Announcements'
+              && request.resource.data.category != 'Announcements'
+              && hasFeature(tenantId, 'custom_alerts')
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+            );
+
+        allow delete: if resource.data.sourceType == 'academy_admin'
+          ? false
+          : resource.data.category == 'WhatsApp'
+          ? false
+          : resource.data.category == 'Announcements'
+            ? hasFeature(tenantId, 'announcements')
+            : hasFeature(tenantId, 'custom_alerts');
+      }
+
+      // Purpose-specific settings. Keep this as ONE allow expression.
+      // Firestore combines multiple allow statements with OR, and each separate
+      // statement can cause its own full teacher-workspace authorization tree to
+      // be evaluated for the same settings document. The selected setting ID
+      // determines exactly one authorization branch below.
+      // Profile data remains available for account recovery and profile maintenance.
+      match /settings/{settingId} {
+        allow read, write: if settingId == 'profile_data'
+          ? ownsTenant(tenantId)
+          : (settingId == 'grading_rules' || settingId == 'report_config')
+            ? hasFeature(tenantId, 'monthly_reports')
+            : settingId == 'trigger_alerts'
+              ? hasFeature(tenantId, 'attendance_alerts')
+              : false;
+      }
+
+      // Storage usage root document: owner may read and create only the exact
+      // initial unverified 1 GiB record used by the current Notes page.
+      match /storage/usage {
+        allow get: if ownsTenant(tenantId);
+        allow list: if false;
+        allow create: if ownsTenant(tenantId) && validInitialStorageUsage();
+        allow update, delete: if false;
+
+        // Teachers can view their own submitted extension requests and create a
+        // pending request only. Approval/grant fields remain backend-owned.
+        match /extensions/{extensionId} {
+          allow get, list: if ownsTenant(tenantId)
+            && hasFeature(tenantId, 'notes_library');
+          allow create: if ownsTenant(tenantId)
+            && validStorageExtensionRequest(tenantId);
+          allow update, delete: if false;
+        }
+      }
+
+      // Notes/Library storage documents remain tenant-private and feature-gated.
+      // Excluding the top-level 'usage' document and its descendants is important:
+      // Firestore overlapping allow rules are ORed, so a broad recursive rule would
+      // otherwise override the usage document's explicit update/delete denial.
+      match /storage/{storageDoc} {
+        allow read, write: if storageDoc != 'usage'
+          && hasFeature(tenantId, 'notes_library');
+
+        match /{nested=**} {
+          allow read, write: if storageDoc != 'usage'
+            && hasFeature(tenantId, 'notes_library');
+        }
+      }
+
+      // Server-owned queue, receipt, dispatch, lock, reservation and billing records.
+      match /whatsappNotificationJobs/{jobId} {
+        allow read, write: if false;
+      }
+
+      match /feeAlertNotificationJobs/{jobId} {
+        allow read, write: if false;
+      }
+
+      match /whatsappAnnouncementDispatches/{dispatchId} {
+        allow read, write: if false;
+      }
+
+      match /whatsappQuizResultDispatches/{dispatchId} {
+        allow read, write: if false;
+      }
+
+      match /whatsappLibraryLinkDispatches/{dispatchId} {
+        allow read, write: if false;
+      }
+
+      match /whatsappOneTimeLocks/{lockId} {
+        allow read, write: if false;
+      }
+
+      match /announcementQuotaReservations/{reservationId} {
+        allow read, write: if false;
+      }
+
+      match /billing/{billingId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Platform-wide grading presets are exposed only through verified APIs.
+    match /platformSettings/{settingId} {
+      allow read, write: if false;
+    }
+
+    // Teacher portal broadcast dismissal receipts are written only by the server API.
+    match /platformTeacherAnnouncementDismissals/{dismissalId} {
+      allow read, write: if false;
+    }
+
+    // All unmatched paths are denied by default.
+  }
+}

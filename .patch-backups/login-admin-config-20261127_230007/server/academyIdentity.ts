@@ -1,0 +1,664 @@
+import { FieldValue } from "firebase-admin/firestore";
+import type { DocumentReference } from "firebase-admin/firestore";
+import type { DecodedIdToken, UserRecord } from "firebase-admin/auth";
+import type { ApiDispatchRequest, ApiDispatchResponse } from "./apiRouteDispatcher.js";
+import { getFirebaseAdminAuth, getFirebaseAdminFirestore } from "./firebaseAdmin.js";
+import {
+  isAcademyRole,
+  isAllowedAcademyEmail,
+  isStrongAcademyPassword,
+  nextAcademyIdFromCounter,
+  normalizeAcademyEmail,
+  normalizeAcademyId,
+} from "./academyIdentityDomain.mjs";
+import { normalizePermissionMap } from "./academyManagementDomain.mjs";
+
+type AcademyRole = "academy_admin" | "teacher";
+type AcademyIdentityRequest = ApiDispatchRequest & {
+  headers?: Record<string, string | string[] | undefined>;
+};
+type AcademyIdentity = {
+  uid: string;
+  email: string;
+  authUser: UserRecord;
+  token: DecodedIdToken;
+};
+type AcademySession = {
+  success: true;
+  uid: string;
+  email: string;
+  academyId: string;
+  academyName: string;
+  role: AcademyRole;
+  status: "active";
+};
+
+export class AcademyApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code = "ACADEMY_REQUEST_FAILED",
+  ) {
+    super(message);
+    this.name = "AcademyApiError";
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const readHeader = (request: AcademyIdentityRequest, name: string): string => {
+  const headers = request.headers ?? {};
+  const value = headers[name] ?? headers[name.toLowerCase()];
+  return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+};
+
+const validateBearerIdentity = async (
+  request: AcademyIdentityRequest,
+  options: { allowUnverifiedEmail?: boolean } = {},
+): Promise<AcademyIdentity> => {
+  const authorization = readHeader(request, "authorization");
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) throw new AcademyApiError(401, "Authentication is required.", "UNAUTHENTICATED");
+
+  const auth = getFirebaseAdminAuth();
+  let token: DecodedIdToken;
+  try {
+    token = await auth.verifyIdToken(match[1], true);
+  } catch {
+    throw new AcademyApiError(401, "Your session is invalid or expired. Please sign in again.", "UNAUTHENTICATED");
+  }
+
+  const email = normalizeAcademyEmail(token.email);
+  if (!token.uid || !email || !isAllowedAcademyEmail(email)) {
+    throw new AcademyApiError(403, "This account is not eligible for Academy access.", "INVALID_IDENTITY");
+  }
+
+  let authUser: UserRecord;
+  try {
+    authUser = await auth.getUser(token.uid);
+  } catch {
+    throw new AcademyApiError(403, "This account could not be verified.", "INVALID_IDENTITY");
+  }
+
+  const customClaims = (authUser.customClaims ?? {}) as Record<string, unknown>;
+  if (
+    authUser.disabled ||
+    normalizeAcademyEmail(authUser.email) !== email ||
+    authUser.uid !== token.uid ||
+    token.admin === true ||
+    customClaims.admin === true
+  ) {
+    throw new AcademyApiError(403, "This account is not eligible for Academy access.", "INVALID_IDENTITY");
+  }
+
+  if (!options.allowUnverifiedEmail && (token.email_verified !== true || authUser.emailVerified !== true)) {
+    throw new AcademyApiError(403, "Verify your email address before accessing the Academy Portal.", "EMAIL_NOT_VERIFIED");
+  }
+
+  return { uid: token.uid, email, authUser, token };
+};
+
+const requiredText = (value: unknown, field: string, maxLength: number): string => {
+  if (typeof value !== "string") {
+    throw new AcademyApiError(400, `${field} is required.`, "INVALID_REQUEST");
+  }
+  const result = value.trim();
+  if (!result || result.length > maxLength) {
+    throw new AcademyApiError(400, `${field} must contain between 1 and ${maxLength} characters.`, "INVALID_REQUEST");
+  }
+  return result;
+};
+
+const normalizeOptionalPhone = (value: unknown): string => {
+  if (value == null || value === "") return "";
+  if (typeof value !== "string") throw new AcademyApiError(400, "The contact number is invalid.", "INVALID_REQUEST");
+  const phone = value.trim().replace(/[\s().-]/g, "");
+  if (phone.length > 16 || !/^\+?[0-9]{10,15}$/.test(phone)) {
+    throw new AcademyApiError(400, "The contact number is invalid.", "INVALID_REQUEST");
+  }
+  return phone;
+};
+
+async function enforceAcademyRateLimit(
+  uid: string,
+  action: "registration" | "teacher_creation",
+  maximum: number,
+  windowMs = 60 * 60 * 1000,
+): Promise<void> {
+  const db = getFirebaseAdminFirestore();
+  const reference = db.collection("academyRateLimits").doc(`${action}_${uid}`);
+  const now = Date.now();
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const data = snapshot.data() ?? {};
+    const previousStart = typeof data.windowStartedAtMs === "number" ? data.windowStartedAtMs : 0;
+    const previousCount = typeof data.count === "number" ? data.count : 0;
+    const windowStartedAtMs = previousStart > 0 && now - previousStart < windowMs ? previousStart : now;
+    const count = windowStartedAtMs === previousStart ? previousCount : 0;
+    if (count >= maximum) {
+      throw new AcademyApiError(429, "Too many attempts. Please wait before trying again.", "RATE_LIMITED");
+    }
+    transaction.set(reference, {
+      action,
+      uid,
+      windowStartedAtMs,
+      count: count + 1,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+}
+
+const normalizeSafeImageUrl = (value: unknown): string => {
+  if (value == null || value === "") return "";
+  if (typeof value !== "string" || value.length > 2048) {
+    throw new AcademyApiError(400, "The Academy logo URL is invalid.", "INVALID_REQUEST");
+  }
+  try {
+    const parsed = new URL(value);
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error("scheme");
+    return parsed.toString();
+  } catch {
+    throw new AcademyApiError(400, "The Academy logo URL is invalid.", "INVALID_REQUEST");
+  }
+};
+
+export async function registerAcademy(
+  request: AcademyIdentityRequest,
+  body: Record<string, unknown>,
+) {
+  const identity = await validateBearerIdentity(request, { allowUnverifiedEmail: true });
+  const academyName = requiredText(body.academyName, "Academy Name", 120);
+  if (academyName.length < 2) {
+    throw new AcademyApiError(400, "Academy Name must contain at least 2 characters.", "INVALID_REQUEST");
+  }
+  const whatsappNumber = normalizeOptionalPhone(body.whatsappNumber);
+  const profileImage = normalizeSafeImageUrl(body.profileImage);
+  await enforceAcademyRateLimit(identity.uid, "registration", 8);
+  const db = getFirebaseAdminFirestore();
+
+  const result = await db.runTransaction(async (transaction) => {
+    const mappingRef = db.collection("academyMemberships").doc(identity.uid);
+    const profileRef = db.collection("users").doc(identity.email);
+    const counterRef = db.collection("systemCounters").doc("academyIds");
+    const [mappingSnapshot, profileSnapshot, counterSnapshot] = await Promise.all([
+      transaction.get(mappingRef),
+      transaction.get(profileRef),
+      transaction.get(counterRef),
+    ]);
+
+    if (mappingSnapshot.exists) {
+      const existingMapping = mappingSnapshot.data() ?? {};
+      const existingAcademyId = normalizeAcademyId(existingMapping.academyId);
+      if (existingAcademyId && existingMapping.role === "academy_admin") {
+        const academyRef = db.collection("academies").doc(existingAcademyId);
+        const memberRef = academyRef.collection("members").doc(identity.uid);
+        const [academySnapshot, memberSnapshot] = await Promise.all([
+          transaction.get(academyRef),
+          transaction.get(memberRef),
+        ]);
+        const academy = academySnapshot.data() ?? {};
+        const member = memberSnapshot.data() ?? {};
+        if (
+          academySnapshot.exists && memberSnapshot.exists &&
+          academy.ownerUid === identity.uid &&
+          normalizeAcademyEmail(member.email) === identity.email &&
+          member.role === "academy_admin"
+        ) {
+          return {
+            academyId: existingAcademyId,
+            academyName: typeof academy.academyName === "string" ? academy.academyName : academyName,
+            status: identity.authUser.emailVerified ? "created" : "pending_email_verification",
+            alreadyCreated: true,
+          };
+        }
+      }
+      throw new AcademyApiError(409, "This account is already associated with an Academy. Sign in with its Academy ID.", "ACCOUNT_ALREADY_MAPPED");
+    }
+
+    if (profileSnapshot.exists) {
+      throw new AcademyApiError(409, "This email already has an existing EduTrack workspace. Ask the platform administrator to map the account to an Academy.", "EXISTING_WORKSPACE");
+    }
+
+    const counterData = counterSnapshot.exists ? counterSnapshot.data() : null;
+    const numericAcademyId = nextAcademyIdFromCounter(counterData);
+    const academyId = String(numericAcademyId);
+    const academyRef = db.collection("academies").doc(academyId);
+    const memberRef = academyRef.collection("members").doc(identity.uid);
+    const academySnapshot = await transaction.get(academyRef);
+    const memberSnapshot = await transaction.get(memberRef);
+    if (academySnapshot.exists || memberSnapshot.exists) {
+      throw new AcademyApiError(409, "The Academy ID sequence has a collision. Contact the platform administrator; no data was overwritten.", "ACADEMY_ID_COLLISION");
+    }
+
+    const isVerified = identity.authUser.emailVerified === true;
+    const status = isVerified ? "active" : "pending_email_verification";
+    const timestamp = FieldValue.serverTimestamp();
+
+    transaction.create(academyRef, {
+      academyId,
+      academyName,
+      ownerUid: identity.uid,
+      ownerEmail: identity.email,
+      status,
+      contactPhone: whatsappNumber,
+      avatarUrl: profileImage,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    transaction.create(memberRef, {
+      uid: identity.uid,
+      email: identity.email,
+      academyId,
+      role: "academy_admin",
+      active: isVerified,
+      status,
+      emailVerified: isVerified,
+      createdAt: timestamp,
+      createdByUid: identity.uid,
+      displayName: academyName,
+      contactPhone: whatsappNumber,
+      avatarUrl: profileImage,
+    });
+    transaction.create(mappingRef, {
+      uid: identity.uid,
+      academyId,
+      role: "academy_admin",
+      email: identity.email,
+      active: isVerified,
+      emailVerified: isVerified,
+      status,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    transaction.set(counterRef, {
+      nextId: numericAcademyId + 1,
+      updatedAt: timestamp,
+    }, { merge: true });
+
+    return {
+      academyId,
+      academyName,
+      status,
+      alreadyCreated: false,
+    };
+  });
+
+  return { success: true, ...result };
+}
+
+const readMembershipContext = async (
+  identity: AcademyIdentity,
+  requestedAcademyId?: unknown,
+): Promise<{
+  academyId: string;
+  academyRef: DocumentReference;
+  academy: Record<string, unknown>;
+  memberRef: DocumentReference;
+  member: Record<string, unknown>;
+  mappingRef: DocumentReference;
+  mapping: Record<string, unknown>;
+  profileRef: DocumentReference;
+  profile: Record<string, unknown> | null;
+  role: AcademyRole;
+}> => {
+  const db = getFirebaseAdminFirestore();
+  const mappingRef = db.collection("academyMemberships").doc(identity.uid);
+  const mappingSnapshot = await mappingRef.get();
+  if (!mappingSnapshot.exists) {
+    throw new AcademyApiError(403, "The Academy ID, email and account do not match an active membership.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+  }
+  const mapping = mappingSnapshot.data() as Record<string, unknown>;
+  const academyId = normalizeAcademyId(mapping.academyId);
+  if (!academyId || (requestedAcademyId !== undefined && normalizeAcademyId(requestedAcademyId) !== academyId)) {
+    throw new AcademyApiError(403, "The Academy ID, email and account do not match an active membership.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+  }
+
+  const academyRef = db.collection("academies").doc(academyId);
+  const memberRef = academyRef.collection("members").doc(identity.uid);
+  const profileRef = db.collection("users").doc(identity.email);
+  const [academySnapshot, memberSnapshot, profileSnapshot] = await Promise.all([
+    academyRef.get(),
+    memberRef.get(),
+    mapping.role === "teacher" ? profileRef.get() : Promise.resolve(null),
+  ]);
+  if (!academySnapshot.exists || !memberSnapshot.exists) {
+    throw new AcademyApiError(403, "The Academy ID, email and account do not match an active membership.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+  }
+  const academy = academySnapshot.data() as Record<string, unknown>;
+  const member = memberSnapshot.data() as Record<string, unknown>;
+  const profile = profileSnapshot?.exists ? profileSnapshot.data() as Record<string, unknown> : null;
+  const role = member.role;
+  if (
+    !isAcademyRole(role) || mapping.role !== role ||
+    normalizeAcademyEmail(mapping.email) !== identity.email ||
+    normalizeAcademyEmail(member.email) !== identity.email ||
+    member.uid !== identity.uid ||
+    String(member.academyId ?? academyId) !== academyId
+  ) {
+    throw new AcademyApiError(403, "The Academy ID, email and account do not match an active membership.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+  }
+
+  if (role === "academy_admin" && academy.ownerUid !== identity.uid) {
+    throw new AcademyApiError(403, "Academy owner authorization could not be verified.", "ACADEMY_AUTHORIZATION_FAILED");
+  }
+  if (role === "teacher") {
+    if (
+      !profile || profile.uid !== identity.uid || profile.role !== "teacher" ||
+      profile.active !== true || profile.disabled === true || profile.deleted === true ||
+      normalizeAcademyEmail(profile.email) !== identity.email ||
+      normalizeAcademyId(profile.academyId) !== academyId
+    ) {
+      throw new AcademyApiError(403, "The teacher workspace is not linked to this Academy.", "ACADEMY_AUTHORIZATION_FAILED");
+    }
+  }
+  if (academy.status !== "active" && !(role === "academy_admin" && academy.status === "pending_email_verification")) {
+    throw new AcademyApiError(403, "This Academy is not active. Contact the platform administrator.", "ACADEMY_INACTIVE");
+  }
+  return { academyId, academyRef, academy, memberRef, member, mappingRef, mapping, profileRef, profile, role };
+};
+
+export async function resolveAcademySession(
+  request: AcademyIdentityRequest,
+  requestedAcademyId?: unknown,
+): Promise<AcademySession> {
+  const identity = await validateBearerIdentity(request);
+  const context = await readMembershipContext(identity, requestedAcademyId);
+  const membershipActive = context.member.active === true && context.mapping.active === true && context.member.emailVerified === true;
+  if (!membershipActive || context.academy.status === "pending_email_verification") {
+    const db = getFirebaseAdminFirestore();
+    await db.runTransaction(async (transaction) => {
+      const [academySnapshot, memberSnapshot, mappingSnapshot, profileSnapshot] = await Promise.all([
+        transaction.get(context.academyRef),
+        transaction.get(context.memberRef),
+        transaction.get(context.mappingRef),
+        context.role === "teacher" ? transaction.get(context.profileRef) : Promise.resolve(null),
+      ]);
+      if (!academySnapshot.exists || !memberSnapshot.exists || !mappingSnapshot.exists) {
+        throw new AcademyApiError(403, "The Academy membership could not be verified.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+      }
+      const academy = academySnapshot.data() ?? {};
+      const member = memberSnapshot.data() ?? {};
+      const mapping = mappingSnapshot.data() ?? {};
+      if (
+        member.role !== context.role || mapping.role !== context.role ||
+        member.uid !== identity.uid ||
+        normalizeAcademyEmail(member.email) !== identity.email ||
+        String(mapping.academyId) !== context.academyId ||
+        String(academy.academyId) !== context.academyId
+      ) {
+        throw new AcademyApiError(403, "The Academy membership could not be verified.", "ACADEMY_MEMBERSHIP_NOT_FOUND");
+      }
+      if (context.role === "academy_admin" && (academy.ownerUid !== identity.uid || !["pending_email_verification", "active"].includes(String(academy.status)))) {
+        throw new AcademyApiError(403, "Academy owner authorization could not be verified.", "ACADEMY_AUTHORIZATION_FAILED");
+      }
+      const isExpectedPendingState =
+        member.status === "pending_email_verification" &&
+        mapping.status === "pending_email_verification" &&
+        (context.role === "academy_admin"
+          ? academy.status === "pending_email_verification"
+          : academy.status === "active");
+      if (!isExpectedPendingState) {
+        throw new AcademyApiError(403, "This Academy membership is inactive. Contact the platform administrator.", "ACADEMY_MEMBERSHIP_INACTIVE");
+      }
+      if (context.role === "teacher") {
+        const profile = profileSnapshot?.data() ?? {};
+        if (
+          !profileSnapshot?.exists || profile.uid !== identity.uid ||
+          profile.role !== "teacher" || profile.active !== true ||
+          normalizeAcademyId(profile.academyId) !== context.academyId ||
+          normalizeAcademyEmail(profile.email) !== identity.email ||
+          academy.status !== "active"
+        ) {
+          throw new AcademyApiError(403, "The teacher workspace is not linked to this Academy.", "ACADEMY_AUTHORIZATION_FAILED");
+        }
+        transaction.update(context.profileRef, { emailVerified: true, updatedAt: new Date().toISOString() });
+      }
+      const timestamp = FieldValue.serverTimestamp();
+      transaction.update(context.memberRef, { active: true, emailVerified: true, status: "active", updatedAt: timestamp });
+      transaction.update(context.mappingRef, { active: true, emailVerified: true, status: "active", updatedAt: timestamp });
+      if (context.role === "academy_admin") {
+        transaction.update(context.academyRef, { status: "active", updatedAt: timestamp });
+      }
+    });
+  }
+
+  return {
+    success: true,
+    uid: identity.uid,
+    email: identity.email,
+    academyId: context.academyId,
+    academyName: String(context.academy.academyName ?? "EduTrack Academy"),
+    role: context.role,
+    status: "active",
+  };
+}
+
+const serializeDate = (value: unknown): string | null => {
+  if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    try {
+      const date = (value as { toDate: () => Date }).toDate();
+      return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "string" ? value : null;
+};
+
+export async function listAcademyTeachers(request: AcademyIdentityRequest) {
+  const session = await resolveAcademySession(request);
+  if (session.role !== "academy_admin") {
+    throw new AcademyApiError(403, "Academy Admin access is required.", "ACADEMY_ADMIN_REQUIRED");
+  }
+  const db = getFirebaseAdminFirestore();
+  const snapshot = await db.collection("academies").doc(session.academyId)
+    .collection("members").where("role", "==", "teacher").limit(250).get();
+  const teachers = snapshot.docs.map((document) => {
+    const data = document.data();
+    return {
+      uid: document.id,
+      name: typeof data.displayName === "string" ? data.displayName : "Teacher",
+      email: normalizeAcademyEmail(data.email),
+      active: data.active === true,
+      emailVerified: data.emailVerified === true,
+      status: typeof data.status === "string" ? data.status : "pending_email_verification",
+      whatsappNumber: typeof data.contactPhone === "string" ? data.contactPhone : "",
+      createdAt: serializeDate(data.createdAt),
+    };
+  });
+  return { success: true, academyId: session.academyId, teachers };
+}
+
+export async function createAcademyTeacher(
+  request: AcademyIdentityRequest,
+  body: Record<string, unknown>,
+) {
+  const session = await resolveAcademySession(request);
+  if (session.role !== "academy_admin") {
+    throw new AcademyApiError(403, "Academy Admin access is required.", "ACADEMY_ADMIN_REQUIRED");
+  }
+
+  const teacherName = requiredText(body.teacherName, "Teacher Name", 100);
+  const email = normalizeAcademyEmail(body.email);
+  if (!isAllowedAcademyEmail(email)) {
+    throw new AcademyApiError(400, "Enter a valid Gmail address ending with @gmail.com.", "INVALID_EMAIL");
+  }
+  if (typeof body.password !== "string" || body.password.length < 8 || !isStrongAcademyPassword(body.password)) {
+    throw new AcademyApiError(400, "Password must contain at least 8 characters, one uppercase letter and one special character.", "WEAK_PASSWORD");
+  }
+  const whatsappNumber = normalizeOptionalPhone(body.whatsappNumber);
+  const designation = typeof body.designation === "string" ? body.designation.trim().slice(0, 80) : "";
+  let permissions: Record<string, boolean>;
+  try { permissions = normalizePermissionMap(body.permissions); }
+  catch (error) { throw new AcademyApiError(400, error instanceof Error ? error.message : "Teacher permissions are invalid.", "INVALID_PERMISSIONS"); }
+  await enforceAcademyRateLimit(session.uid, "teacher_creation", 30);
+  const db = getFirebaseAdminFirestore();
+  const auth = getFirebaseAdminAuth();
+  const profileRef = db.collection("users").doc(email);
+  const priorProfile = await profileRef.get();
+  if (priorProfile.exists) {
+    throw new AcademyApiError(409, "This email is already linked to an EduTrack workspace. It cannot be moved automatically.", "EMAIL_ALREADY_ASSIGNED");
+  }
+
+  let createdUser: UserRecord;
+  try {
+    createdUser = await auth.createUser({
+      email,
+      password: String(body.password),
+      displayName: teacherName,
+      emailVerified: false,
+      disabled: false,
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    if (code === "auth/email-already-exists") {
+      throw new AcademyApiError(409, "An account with this email already exists. Ask the platform administrator to review its Academy mapping.", "EMAIL_ALREADY_ASSIGNED");
+    }
+    throw new AcademyApiError(400, "The teacher account could not be created. Check the details and try again.", "TEACHER_CREATION_FAILED");
+  }
+
+  const memberRef = db.collection("academies").doc(session.academyId).collection("members").doc(createdUser.uid);
+  const mappingRef = db.collection("academyMemberships").doc(createdUser.uid);
+  const timestampIso = new Date().toISOString();
+  let transactionWriteConfirmed = false;
+  try {
+    await db.runTransaction(async (transaction) => {
+      const [existingProfile, existingMapping, existingMember, academySnapshot] = await Promise.all([
+        transaction.get(profileRef),
+        transaction.get(mappingRef),
+        transaction.get(memberRef),
+        transaction.get(db.collection("academies").doc(session.academyId)),
+      ]);
+      if (existingProfile.exists || existingMapping.exists || existingMember.exists) {
+        throw new AcademyApiError(409, "The teacher account is already associated with an EduTrack workspace.", "EMAIL_ALREADY_ASSIGNED");
+      }
+      if (!academySnapshot.exists || academySnapshot.data()?.status !== "active" || academySnapshot.data()?.ownerUid !== session.uid) {
+        throw new AcademyApiError(403, "The Academy is no longer available for teacher creation.", "ACADEMY_INACTIVE");
+      }
+      const timestamp = FieldValue.serverTimestamp();
+      transaction.create(profileRef, {
+        uid: createdUser.uid,
+        email,
+        teacherName,
+        whatsappNumber,
+        profileImage: "",
+        designation,
+        permissions,
+        active: true,
+        role: "teacher",
+        academyId: session.academyId,
+        emailVerified: false,
+        registrationSource: "academy_admin_created",
+        approvalStatus: "approved",
+        createdAt: timestampIso,
+      });
+      transaction.create(memberRef, {
+        uid: createdUser.uid,
+        email,
+        role: "teacher",
+        academyId: session.academyId,
+        active: false,
+        emailVerified: false,
+        status: "pending_email_verification",
+        createdAt: timestamp,
+        createdByUid: session.uid,
+        displayName: teacherName,
+        designation,
+        permissions,
+        contactPhone: whatsappNumber,
+      });
+      transaction.create(mappingRef, {
+        uid: createdUser.uid,
+        academyId: session.academyId,
+        role: "teacher",
+        email,
+        active: false,
+        emailVerified: false,
+        status: "pending_email_verification",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+    transactionWriteConfirmed = true;
+  } catch (error) {
+    // A transport failure can occur after Firestore committed. Re-read all three records
+    // before deleting the Auth user so an ambiguous commit cannot leave orphaned membership.
+    const [savedProfile, savedMapping, savedMember] = await Promise.all([
+      profileRef.get(), mappingRef.get(), memberRef.get(),
+    ]);
+    const profileData = savedProfile.data() ?? {};
+    const mappingData = savedMapping.data() ?? {};
+    const memberData = savedMember.data() ?? {};
+    const alreadyCommitted = savedProfile.exists && savedMapping.exists && savedMember.exists &&
+      profileData.uid === createdUser.uid && profileData.role === "teacher" &&
+      normalizeAcademyEmail(profileData.email) === email && normalizeAcademyId(profileData.academyId) === session.academyId &&
+      mappingData.role === "teacher" && normalizeAcademyEmail(mappingData.email) === email && normalizeAcademyId(mappingData.academyId) === session.academyId &&
+      memberData.uid === createdUser.uid && memberData.role === "teacher" && normalizeAcademyEmail(memberData.email) === email && normalizeAcademyId(memberData.academyId) === session.academyId && memberData.createdByUid === session.uid;
+    if (!alreadyCommitted) {
+      const anyRecordExists = savedProfile.exists || savedMapping.exists || savedMember.exists;
+      if (!anyRecordExists) {
+        try {
+          await auth.deleteUser(createdUser.uid);
+        } catch {
+          // Never expose deletion internals or the submitted password to the caller.
+        }
+      }
+      if (error instanceof AcademyApiError) throw error;
+      throw new AcademyApiError(
+        500,
+        anyRecordExists
+          ? "The teacher account creation outcome could not be confirmed. Refresh the teacher list before retrying."
+          : "The teacher workspace could not be saved. No password was stored.",
+        "TEACHER_CREATION_FAILED",
+      );
+    }
+    transactionWriteConfirmed = true;
+  }
+  if (!transactionWriteConfirmed) {
+    throw new AcademyApiError(500, "The teacher workspace could not be confirmed.", "TEACHER_CREATION_FAILED");
+  }
+
+  return {
+    success: true,
+    teacher: {
+      uid: createdUser.uid,
+      name: teacherName,
+      email,
+      active: false,
+      emailVerified: false,
+      status: "pending_email_verification",
+      whatsappNumber,
+      designation,
+      permissions,
+    },
+    message: "Teacher account created. The teacher must verify the email address before signing in.",
+  };
+}
+
+export function sendAcademyApiError(response: ApiDispatchResponse, error: unknown) {
+  if (error instanceof AcademyApiError) {
+    return response.status(error.status).json({ success: false, code: error.code, error: error.message });
+  }
+
+  // The client receives a generic message, while the local/server terminal gets
+  // enough detail to identify the failing Firebase Admin or Firestore operation.
+  // Deliberately do not log request headers, tokens, passwords, private keys, or bodies.
+  const diagnostic = error instanceof Error
+    ? {
+        name: error.name,
+        code: typeof (error as Error & { code?: unknown }).code === "string"
+          ? (error as Error & { code: string }).code
+          : undefined,
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 10).join("\n"),
+      }
+    : { name: typeof error, message: "A non-Error value was thrown." };
+  console.error("[academy-session] unexpected backend exception", diagnostic);
+
+  return response.status(500).json({ success: false, code: "INTERNAL_ERROR", error: "The request could not be completed. Please try again." });
+}
+
+export function isAcademyApiRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value);
+}
